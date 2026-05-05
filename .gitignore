@@ -1,0 +1,5 @@
+# Публикуется только бриф сайта (GitHub Pages / Deploy from branch).
+# Остальные файлы проекта остаются локально.
+*
+!.gitignore
+!brief-website.html
