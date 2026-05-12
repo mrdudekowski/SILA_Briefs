@@ -757,6 +757,31 @@
       max-width: 52ch;
     }
 
+    .summary-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-3);
+      margin-top: var(--space-5);
+      max-width: var(--container-max);
+    }
+
+    .submission-status {
+      margin: var(--space-4) 0 0;
+      max-width: 52ch;
+      color: var(--color-text-muted);
+      font-size: 0.9375rem;
+      line-height: var(--line-height-prose);
+      white-space: pre-wrap;
+    }
+
+    .submission-status--success {
+      color: var(--color-success);
+    }
+
+    .submission-status--error {
+      color: var(--color-error);
+    }
+
     .summary-item {
       border: none;
       border-radius: 0;
@@ -875,6 +900,10 @@
   </main>
 
   <script>
+    const briefDeliverySettings = {
+      endpointUrl: "https://script.google.com/macros/s/AKfycbwImbeTPOqLcpnBzC5EkCnzeDduQUS6RZED8olAwJIpRmk-TFBUIzENXqHNGRHTpzvk/exec"
+    };
+
     /**
      * Поля брифа только для сайта (один HTML-файл; для GitHub Pages — обычно index.html в корне репозитория).
      */
@@ -1710,7 +1739,7 @@ ${reportExportAppendixCss}
         ${detailSectionsHtml}
       </section>
       <p class="step-description summary-save-reminder">
-        ${escapeHtml("Сохраните HTML файл с брифом и отправьте нам обратно! После обработки брифа мы отправим вам коммерческое предложение, в котором вы детально сможете рассмотреть смету по работе, начинку сайта и прочие детали разработки сайта.")}
+        ${escapeHtml("Бриф отправлен автоматически. После обработки брифа мы отправим вам коммерческое предложение, в котором вы детально сможете рассмотреть смету по работе, начинку сайта и прочие детали разработки сайта.")}
       </p>
       <p class="report-meta">Дата формирования: ${escapeHtml(new Date().toLocaleString("ru-RU"))}</p>
     </div>
@@ -1734,7 +1763,79 @@ ${reportExportAppendixCss}
         URL.revokeObjectURL(url);
       };
 
-      return { saveReport, normalizeOutputText, escapeHtml };
+      return { buildFileName, buildStaticReport, saveReport, normalizeOutputText, escapeHtml };
+    })();
+
+    const briefDeliveryModule = (() => {
+      const makeSubmissionSections = (state) => {
+        const sections = state.category === "website"
+          ? categorySchemaModule.getMergedWebsiteBriefSections()
+          : [];
+
+        return sections.map((section) => ({
+          id: section.id,
+          title: section.title,
+          fields: section.blocks
+            .flatMap((block) => block.fields)
+            .map((field) => ({
+              name: field.name,
+              label: field.label,
+              value: state.details[field.name] || "",
+              displayValue: exportModule.normalizeOutputText(state.details[field.name])
+            }))
+        }));
+      };
+
+      const buildSubmissionPayload = (state) => ({
+        submittedAt: new Date().toISOString(),
+        source: {
+          title: document.title,
+          url: window.location.href
+        },
+        category: {
+          value: state.category,
+          label: categorySchemaModule.categoryLabelByValue[state.category] || state.category
+        },
+        contacts: {
+          clientName: String(state.contacts.clientName || "").trim(),
+          companyName: String(state.contacts.companyName || "").trim(),
+          phone: String(state.contacts.phone || "").trim(),
+          email: String(state.contacts.email || "").trim()
+        },
+        sections: makeSubmissionSections(state),
+        report: {
+          fileName: exportModule.buildFileName(state),
+          html: exportModule.buildStaticReport(state)
+        }
+      });
+
+      const sendBrief = async (state) => {
+        const endpointUrl = String(briefDeliverySettings.endpointUrl || "").trim();
+        if (!endpointUrl) {
+          throw new Error("Отправка пока не настроена: владелец должен указать endpointUrl в настройках брифа.");
+        }
+
+        const response = await fetch(endpointUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify(buildSubmissionPayload(state))
+        });
+
+        if (!response.ok) {
+          throw new Error("Сервер отправки временно недоступен. Попробуйте ещё раз или сохраните копию брифа.");
+        }
+
+        const result = await response.json().catch(() => ({}));
+        if (result && result.ok === false) {
+          throw new Error(result.message || "Не удалось отправить бриф. Попробуйте ещё раз.");
+        }
+
+        return result;
+      };
+
+      return { sendBrief };
     })();
 
     /**
@@ -2045,7 +2146,7 @@ ${reportExportAppendixCss}
         wizardContentElement.innerHTML = `
           <h2 class="step-title">Финальная проверка</h2>
           <p class="step-description">
-            Проверьте ответы перед сохранением. Файл будет сформирован в формате HTML и готов для отправки по почте.
+            Проверьте ответы перед отправкой. После успешной отправки владелец получит структурированный бриф и HTML-копию.
           </p>
           <div class="summary-list">
             <article class="summary-item">
@@ -2058,8 +2159,12 @@ ${reportExportAppendixCss}
             ${detailsHtml}
           </div>
           <p class="step-description summary-save-reminder">${exportModule.escapeHtml(
-            "Сохраните HTML файл с брифом и отправьте нам обратно! После обработки брифа мы отправим вам коммерческое предложение, в котором вы детально сможете рассмотреть смету по работе, начинку сайта и прочие детали разработки сайта."
+            "Нажмите «Отправить бриф», чтобы мы получили ответы автоматически. После обработки брифа мы отправим вам коммерческое предложение, в котором вы детально сможете рассмотреть смету по работе, начинку сайта и прочие детали разработки сайта."
           )}</p>
+          <div class="summary-actions">
+            <button id="saveReportButton" class="btn" type="button">Сохранить HTML-копию</button>
+          </div>
+          <p id="submissionStatus" class="submission-status" aria-live="polite"></p>
           <p class="help-text">Имя файла: Бриф [Компания] Веб-сайт [ММ.ГГ].html</p>`;
       };
 
@@ -2076,7 +2181,7 @@ ${reportExportAppendixCss}
         progressBarElement.setAttribute("aria-valuenow", String(percent));
 
         prevButton.disabled = currentIndex === 0;
-        nextButton.textContent = stateStore.getCurrentStep() === "summary" ? "Сохранить бриф" : "Далее";
+        nextButton.textContent = stateStore.getCurrentStep() === "summary" ? "Отправить бриф" : "Далее";
       };
 
       const collectCurrentInputs = () => {
@@ -2119,6 +2224,18 @@ ${reportExportAppendixCss}
         });
       };
 
+      const setSubmissionStatus = (message, statusType) => {
+        const statusElement = document.getElementById("submissionStatus");
+        if (!statusElement) {
+          return;
+        }
+        statusElement.textContent = message || "";
+        statusElement.className = "submission-status";
+        if (statusType) {
+          statusElement.classList.add(`submission-status--${statusType}`);
+        }
+      };
+
       const renderCurrentStep = () => {
         const step = stateStore.getCurrentStep();
         if (step === "contacts") {
@@ -2144,9 +2261,21 @@ ${reportExportAppendixCss}
       };
 
       const bindActions = () => {
-        nextButton.addEventListener("click", () => {
+        nextButton.addEventListener("click", async () => {
           if (stateStore.getCurrentStep() === "summary") {
-            exportModule.saveReport(stateStore.getData());
+            setSubmissionStatus("Отправляем бриф. Пожалуйста, не закрывайте страницу...", "");
+            nextButton.disabled = true;
+            prevButton.disabled = true;
+            try {
+              await briefDeliveryModule.sendBrief(stateStore.getData());
+              setSubmissionStatus("Бриф успешно отправлен. Спасибо, мы скоро свяжемся с вами.", "success");
+            } catch (err) {
+              setSubmissionStatus(err && err.message ? err.message : "Не удалось отправить бриф. Попробуйте ещё раз.", "error");
+            } finally {
+              nextButton.disabled = false;
+              prevButton.disabled = false;
+              syncStepMeta();
+            }
             return;
           }
           const valid = collectCurrentInputs();
@@ -2161,6 +2290,15 @@ ${reportExportAppendixCss}
         prevButton.addEventListener("click", () => {
           stateStore.goPrev();
           renderCurrentStep();
+        });
+
+        wizardContentElement.addEventListener("click", (event) => {
+          const saveButton = event.target.closest("#saveReportButton");
+          if (!saveButton) {
+            return;
+          }
+          exportModule.saveReport(stateStore.getData());
+          setSubmissionStatus("HTML-копия сохранена на устройстве. Автоматическая отправка выполняется кнопкой «Отправить бриф».", "");
         });
       };
 
